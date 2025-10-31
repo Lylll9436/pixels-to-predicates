@@ -6,6 +6,8 @@
 
 Official implementation of "From Pixels to Predicates: Structuring urban perception with scene graphs". A deep learning framework that transforms street view imagery (SVI) into structured scene graph representations for predicting six perceptual indicators (safety, liveliness, boredom, wealth, depression, and beauty) of urban environments.
 
+**NOTICE**: We upgrade this repo's method using a LLM api(for example, ChatGPT or Gemini) to generate scene graphs, if you want use a OpenPSG model to do it, please refer to this awesome work: https://github.com/Jingkang50/OpenPSG
+
 ## 🎯 Overview
 
 This research addresses the challenge of predicting human perception of urban environments by modeling street scenes as structured graphs rather than relying solely on pixel features or object co-occurrence statistics. Our three-stage pipeline: (1) extracts object–predicate–object triplets using Open-set Panoptic Scene Graph (OpenPSG), (2) learns compact scene-level embeddings through GraphMAE (heterogeneous graph autoencoder), and (3) predicts perception scores using pairwise comparison learning with Bradley-Terry models.
