@@ -304,7 +304,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 For questions or collaboration opportunities, please open an issue on GitHub or contact the corresponding author:
 
-- **Yu Zhang** (Corresponding Author): zhangyuseu@seu.edu.cn
+- **Yunlong Liu**: lyl_arch@seu.edu.cn
 - School of Architecture, Southeast University, China
 
 ---
