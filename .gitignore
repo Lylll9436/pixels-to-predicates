@@ -125,3 +125,6 @@ site/
 
 # Serena
 .serena/
+
+# Cursor
+.cursor/
