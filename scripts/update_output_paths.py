@@ -15,7 +15,7 @@ REPLACEMENTS: List[Tuple[str, str, str]] = [
     ("*.py", r'output/01/', r'output/stage_01_descriptions/'),
     
     ("*.py", r'"output/sum/', r'"output/stage_02_merged/'),
-    ("*.py", r"'output/sum/", r"'output/stage_02_merged/'),
+    ("*.py", r"'output/sum/'", r"'output/stage_02_merged/'"),
     ("*.py", r'output/sum/', r'output/stage_02_merged/'),
     
     ("*.py", r'"output/scene_graphs"', r'"output/stage_03_scene_graphs"'),
