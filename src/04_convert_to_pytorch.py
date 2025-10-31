@@ -296,7 +296,7 @@ def main():
     parser.add_argument(
         "--inputs",
         nargs="+",
-        default=["output/stage_01_descriptions/scene_graph", "output/stage_03_scene_graphs"],
+        default=["output/stage_03_scene_graphs"],
         help="Input JSON files or directories, can provide multiple paths",
     )
     parser.add_argument(
