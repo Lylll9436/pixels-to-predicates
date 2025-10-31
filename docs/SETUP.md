@@ -308,5 +308,5 @@ If you encounter issues:
 
 ---
 
-**Last Updated**: October 2024
+**Last Updated**: October 2025
 
