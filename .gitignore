@@ -122,3 +122,5 @@ site/
 
 # Keep empty directories
 !.gitkeep
+
+.serena/
