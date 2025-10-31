@@ -615,29 +615,29 @@ Attribute filling: add material:brick, condition:worn to wall_01; status:on, lig
             thread.start()
             threads.append(thread)
     
-    # 等待所有任务完成
+    # Wait for all tasks to complete
     task_queue.join()
     
     for thread in threads:
         thread.join()
     
-    print(f"✓ 并行处理完成: 成功 {success_count} 个，失败 {failed_count} 个")
+    print(f"✓ Parallel processing complete: {success_count} succeeded, {failed_count} failed")
     return scene_descriptions
 
 
 def batch_build_scene_graphs(scene_descriptions: List[Dict]) -> List[Dict]:
-    """批量构建场景图"""
+    """Batch build scene graphs"""
     try:
         from sentence_transformers import SentenceTransformer
         import numpy as np
         
-        # 初始化Sentence-BERT编码器
-        print("初始化Sentence-BERT编码器...")
+        # Initialize Sentence-BERT encoder
+        print("Initializing Sentence-BERT encoder...")
         encoder = SentenceTransformer("all-MiniLM-L6-v2")
         
         scene_graphs_data = []
         
-        for desc_info in tqdm(scene_descriptions, desc="构建场景图"):
+        for desc_info in tqdm(scene_descriptions, desc="Building scene graphs"):
             info = desc_info['info']
             scene_data = desc_info['scene_data']
             
@@ -645,10 +645,10 @@ def batch_build_scene_graphs(scene_descriptions: List[Dict]) -> List[Dict]:
             triplets = scene_data.get("semantic_triplets", [])
             
             if not entities or not triplets:
-                print(f"✗ 场景数据不完整 {info['name']}: entities={len(entities)}, triplets={len(triplets)}")
+                print(f"✗ Incomplete scene data {info['name']}: entities={len(entities)}, triplets={len(triplets)}")
                 continue
             
-            # 编码实体
+            # Encode entities
             entity_texts = []
             for entity in entities:
                 class_name = entity["class"]
@@ -657,7 +657,7 @@ def batch_build_scene_graphs(scene_descriptions: List[Dict]) -> List[Dict]:
                 entity_text = f"{class_name} {attr_text}".strip()
                 entity_texts.append(entity_text)
             
-            # 编码关系
+            # Encode relations
             relation_texts = []
             for triplet in triplets:
                 if "【" in triplet and "】" in triplet:
@@ -669,11 +669,11 @@ def batch_build_scene_graphs(scene_descriptions: List[Dict]) -> List[Dict]:
                         relation_text = f"{head} {predicate} {tail}"
                         relation_texts.append(relation_text)
             
-            # 编码文本为向量
+            # Encode text to vectors
             entity_embeddings = encoder.encode(entity_texts)
             relation_embeddings = encoder.encode(relation_texts) if relation_texts else np.array([]).reshape(0, 384)
             
-            # 构建边索引
+            # Build edge indices
             edge_index = []
             edge_features = []
             
@@ -684,7 +684,7 @@ def batch_build_scene_graphs(scene_descriptions: List[Dict]) -> List[Dict]:
                         head_id = parts[0].replace("【", "")
                         tail_id = parts[2].replace("】", "")
                         
-                        # 查找实体索引
+                        # Find entity indices
                         head_idx = None
                         tail_idx = None
                         for j, entity in enumerate(entities):
@@ -699,14 +699,14 @@ def batch_build_scene_graphs(scene_descriptions: List[Dict]) -> List[Dict]:
                                 edge_features.append(relation_embeddings[i])
             
             if not edge_index:
-                print(f"✗ 无法构建边索引 {info['name']}")
+                print(f"✗ Unable to build edge indices {info['name']}")
                 continue
             
-            # 构建图级特征
+            # Build graph-level features
             summary = scene_data.get("image_summary", "")
             summary_embedding = encoder.encode([summary])[0] if summary else np.zeros(384)
             
-            # 构建图特征（使用实体和关系的平均）
+            # Build graph features (using mean of entities and relations)
             all_features = np.vstack([entity_embeddings, relation_embeddings]) if len(relation_embeddings) > 0 else entity_embeddings
             graph_features = np.mean(all_features, axis=0)
             
@@ -726,88 +726,88 @@ def batch_build_scene_graphs(scene_descriptions: List[Dict]) -> List[Dict]:
             
             scene_graphs_data.append(scene_graph)
         
-        print(f"✓ 成功构建 {len(scene_graphs_data)} 个场景图")
+        print(f"✓ Successfully built {len(scene_graphs_data)} scene graphs")
         return scene_graphs_data
         
     except Exception as e:
-        print(f"✗ 批量构建场景图失败: {e}")
+        print(f"✗ Batch building scene graphs failed: {e}")
         return []
 
 
 def batch_save_scene_graphs(scene_graphs_data: List[Dict], scene_graphs_dir: Path) -> None:
-    """批量保存场景图为PyTorch格式"""
+    """Batch save scene graphs in PyTorch format"""
     scene_graphs_dir.mkdir(parents=True, exist_ok=True)
     
     success_count = 0
     
-    for scene_graph_data in tqdm(scene_graphs_data, desc="保存场景图"):
+    for scene_graph_data in tqdm(scene_graphs_data, desc="Saving scene graphs"):
         try:
-            # 转换为PyTorch格式
+            # Convert to PyTorch format
             pytorch_graph = convert_to_pytorch_format(scene_graph_data)
             if pytorch_graph is None:
                 continue
             
-            # 保存图文件
+            # Save graph file
             graph_file = scene_graphs_dir / f"graph_{scene_graph_data['file_id']}.pt"
             torch.save(pytorch_graph, graph_file)
             success_count += 1
             
         except Exception as e:
-            print(f"✗ 保存场景图失败 {scene_graph_data['file_id']}: {e}")
+            print(f"✗ Failed to save scene graph {scene_graph_data['file_id']}: {e}")
             continue
     
-    print(f"✓ 成功保存 {success_count} 个场景图")
+    print(f"✓ Successfully saved {success_count} scene graphs")
 
 
 def generate_scene_graph_if_missing(image_path: Path, scene_graphs_dir: Path) -> Optional[Path]:
-    """如果场景图不存在，则生成它"""
-    # 从图像文件名提取ID
+    """Generate scene graph if it doesn't exist"""
+    # Extract ID from image filename
     image_name = image_path.name
     if '_' in image_name:
-        # 格式: location_original_id.jpg
+        # Format: location_original_id.jpg
         original_id = image_name.split('_', 1)[1].rsplit('.', 1)[0]
     else:
-        # 格式: original_id.jpg
+        # Format: original_id.jpg
         original_id = image_path.stem
     
-    # 检查是否已存在
+    # Check if already exists
     graph_file = scene_graphs_dir / f"graph_{original_id}.pt"
     if graph_file.exists():
         return graph_file
     
-    print(f"⚠ 场景图不存在，开始生成: {original_id}")
+    print(f"⚠ Scene graph does not exist, generating: {original_id}")
     
-    # 1. 使用Gemini API生成场景描述
+    # 1. Generate scene description using Gemini API
     scene_description = generate_scene_description(image_path)
     if not scene_description:
-        print(f"✗ 生成场景描述失败: {image_path.name}")
+        print(f"✗ Failed to generate scene description: {image_path.name}")
         return None
     
-    # 2. 构建场景图
+    # 2. Build scene graph
     scene_graph_data = build_scene_graph_from_description(scene_description, original_id)
     if not scene_graph_data:
-        print(f"✗ 构建场景图失败: {image_path.name}")
+        print(f"✗ Failed to build scene graph: {image_path.name}")
         return None
     
-    # 3. 转换为PyTorch格式并保存
+    # 3. Convert to PyTorch format and save
     pytorch_graph = convert_to_pytorch_format(scene_graph_data)
     if pytorch_graph is None:
-        print(f"✗ 转换为PyTorch格式失败: {image_path.name}")
+        print(f"✗ Failed to convert to PyTorch format: {image_path.name}")
         return None
     
-    # 保存图文件
+    # Save graph file
     try:
         scene_graphs_dir.mkdir(parents=True, exist_ok=True)
         torch.save(pytorch_graph, graph_file)
-        print(f"✓ 场景图已生成: {graph_file}")
+        print(f"✓ Scene graph generated: {graph_file}")
         return graph_file
     except Exception as e:
-        print(f"✗ 保存场景图失败: {e}")
+        print(f"✗ Failed to save scene graph: {e}")
         return None
 
 
 def generate_scene_description(image_path: Path) -> Optional[Dict]:
-    """使用Gemini API生成场景描述"""
+    """Generate scene description using Gemini API"""
     import base64
     import requests
     
@@ -815,22 +815,22 @@ def generate_scene_description(image_path: Path) -> Optional[Dict]:
     API_BASE = os.getenv("API_BASE", "https://chatapi.nloli.xyz")
     MODEL = os.getenv("MODEL", "gemini-2.5-flash")
     
-    # 从环境变量读取API密钥（使用第一个）
+    # Read API key from environment variable (use the first one)
     api_keys_str = os.getenv("API_KEYS", "")
     if not api_keys_str:
-        raise ValueError("未设置API_KEYS环境变量，请设置后再使用")
+        raise ValueError("API_KEYS environment variable not set, please set it before use")
     API_KEY = api_keys_str.split(",")[0].strip()
     
-    # 编码图片
+    # Encode image
     try:
         with open(image_path, "rb") as f:
             image_data = f.read()
         image_base64 = base64.b64encode(image_data).decode("utf-8")
     except Exception as e:
-        print(f"✗ 图片编码失败: {e}")
+        print(f"✗ Failed to encode image: {e}")
         return None
     
-    # 构建请求
+    # Build request
     endpoint = f"{API_BASE}/v1beta/models/{MODEL}:generateContent"
     headers = {"Content-Type": "application/json"}
     params = {"key": API_KEY}
@@ -1039,50 +1039,50 @@ Attribute filling: add material:brick, condition:worn to wall_01; status:on, lig
                             scene_data = json.loads(text_content)
                             return scene_data
                         except json.JSONDecodeError as e:
-                            print(f"✗ JSON解析失败: {e}")
+                            print(f"✗ JSON parsing failed: {e}")
                             return None
         else:
-            print(f"✗ API请求失败: {response.status_code}")
+            print(f"✗ API request failed: {response.status_code}")
             return None
             
     except Exception as e:
-        print(f"✗ API请求异常: {e}")
+        print(f"✗ API request exception: {e}")
         return None
 
 
 def build_scene_graph_from_description(scene_data: Dict, file_id: str) -> Optional[Dict]:
-    """从场景描述构建场景图"""
+    """Build scene graph from scene description"""
     try:
         from sentence_transformers import SentenceTransformer
         import numpy as np
         
-        # 初始化Sentence-BERT编码器
+        # Initialize Sentence-BERT encoder
         encoder = SentenceTransformer("all-MiniLM-L6-v2")
         
         entities = scene_data.get("entities", [])
         triplets = scene_data.get("semantic_triplets", [])
         
         if not entities or not triplets:
-            print(f"✗ 场景数据不完整: entities={len(entities)}, triplets={len(triplets)}")
+            print(f"✗ Incomplete scene data: entities={len(entities)}, triplets={len(triplets)}")
             return None
         
-        # 构建实体映射
+        # Build entity mapping
         entity_map = {entity["id"]: entity for entity in entities}
         
-        # 编码实体
+        # Encode entities
         entity_texts = []
         for entity in entities:
-            # 构建实体文本描述
+            # Build entity text description
             class_name = entity["class"]
             attributes = entity.get("attributes", {})
             attr_text = " ".join([f"{k}:{v}" for k, v in attributes.items()])
             entity_text = f"{class_name} {attr_text}".strip()
             entity_texts.append(entity_text)
         
-        # 编码关系
+        # Encode relations
         relation_texts = []
         for triplet in triplets:
-            # 解析三元组
+            # Parse triplet
             if "【" in triplet and "】" in triplet:
                 parts = triplet.split("】-【")
                 if len(parts) == 3:
@@ -1092,11 +1092,11 @@ def build_scene_graph_from_description(scene_data: Dict, file_id: str) -> Option
                     relation_text = f"{head} {predicate} {tail}"
                     relation_texts.append(relation_text)
         
-        # 编码文本为向量
+        # Encode text to vectors
         entity_embeddings = encoder.encode(entity_texts)
         relation_embeddings = encoder.encode(relation_texts) if relation_texts else np.array([]).reshape(0, 384)
         
-        # 构建边索引
+        # Build edge indices
         edge_index = []
         edge_features = []
         
@@ -1107,7 +1107,7 @@ def build_scene_graph_from_description(scene_data: Dict, file_id: str) -> Option
                     head_id = parts[0].replace("【", "")
                     tail_id = parts[2].replace("】", "")
                     
-                    # 查找实体索引
+                    # Find entity indices
                     head_idx = None
                     tail_idx = None
                     for j, entity in enumerate(entities):
@@ -1122,14 +1122,14 @@ def build_scene_graph_from_description(scene_data: Dict, file_id: str) -> Option
                             edge_features.append(relation_embeddings[i])
         
         if not edge_index:
-            print(f"✗ 无法构建边索引")
+            print(f"✗ Unable to build edge indices")
             return None
         
-        # 构建图级特征
+        # Build graph-level features
         summary = scene_data.get("image_summary", "")
         summary_embedding = encoder.encode([summary])[0] if summary else np.zeros(384)
         
-        # 构建图特征（使用实体和关系的平均）
+        # Build graph features (using mean of entities and relations)
         all_features = np.vstack([entity_embeddings, relation_embeddings]) if len(relation_embeddings) > 0 else entity_embeddings
         graph_features = np.mean(all_features, axis=0)
         
@@ -1150,24 +1150,24 @@ def build_scene_graph_from_description(scene_data: Dict, file_id: str) -> Option
         return scene_graph
         
     except Exception as e:
-        print(f"✗ 构建场景图失败: {e}")
+        print(f"✗ Failed to build scene graph: {e}")
         return None
 
 
 def convert_to_pytorch_format(scene_graph_data: Dict) -> Optional[Data]:
-    """将场景图数据转换为PyTorch Geometric格式"""
+    """Convert scene graph data to PyTorch Geometric format"""
     try:
-        # 提取特征
+        # Extract features
         node_features = torch.tensor(scene_graph_data["node_features"], dtype=torch.float32)
         edge_index = torch.tensor(scene_graph_data["edge_index"], dtype=torch.long)
         edge_features = torch.tensor(scene_graph_data["edge_features"], dtype=torch.float32)
         graph_features = torch.tensor(scene_graph_data["graph_features"], dtype=torch.float32)
         
-        # 确保edge_index的形状正确
+        # Ensure edge_index has correct shape
         if edge_index.shape[0] != 2:
             edge_index = edge_index.T
         
-        # 创建PyTorch Geometric Data对象
+        # Create PyTorch Geometric Data object
         data = Data(
             x=node_features,
             edge_index=edge_index,
@@ -1177,7 +1177,7 @@ def convert_to_pytorch_format(scene_graph_data: Dict) -> Optional[Data]:
             num_edges=scene_graph_data["num_edges"]
         )
         
-        # 添加额外信息
+        # Add extra information
         data.summary = scene_graph_data.get("summary", "")
         summary_embedding = scene_graph_data.get("summary_embedding", [])
         data.summary_embedding = torch.tensor(summary_embedding, dtype=torch.float32) if summary_embedding else torch.empty(0, dtype=torch.float32)
@@ -1188,12 +1188,12 @@ def convert_to_pytorch_format(scene_graph_data: Dict) -> Optional[Data]:
         return data
         
     except Exception as e:
-        print(f"✗ 转换为PyTorch格式失败: {e}")
+        print(f"✗ Failed to convert to PyTorch format: {e}")
         return None
 
 
 def load_scene_graph(graph_path: Path) -> Optional[Data]:
-    """加载场景图数据"""
+    """Load scene graph data"""
     try:
         graph = torch.load(graph_path, map_location="cpu", weights_only=False)
         
@@ -1201,27 +1201,27 @@ def load_scene_graph(graph_path: Path) -> Optional[Data]:
             graph = Data(**graph)
         
         if not isinstance(graph, Data):
-            print(f"⚠ 无效的图数据格式: {graph_path}")
+            print(f"⚠ Invalid graph data format: {graph_path}")
             return None
         
         if graph.x is None or graph.x.numel() == 0:
-            print(f"⚠ 空图数据: {graph_path}")
+            print(f"⚠ Empty graph data: {graph_path}")
             return None
         
         return graph
         
     except Exception as e:
-        print(f"✗ 加载图数据失败 {graph_path}: {e}")
+        print(f"✗ Failed to load graph data {graph_path}: {e}")
         return None
 
 
 def extract_graph_features(graph: Data, graph_mae_model: GraphMAE) -> torch.Tensor:
-    """使用GraphMAE提取图特征"""
-    # 确保所有张量在同一设备上
+    """Extract graph features using GraphMAE"""
+    # Ensure all tensors are on the same device
     device = next(graph_mae_model.parameters()).device
     graph = graph.to(device)
     
-    # 添加batch维度
+    # Add batch dimension
     graph.batch = torch.zeros(graph.x.size(0), dtype=torch.long, device=device)
     
     with torch.no_grad():
@@ -1231,7 +1231,7 @@ def extract_graph_features(graph: Data, graph_mae_model: GraphMAE) -> torch.Tens
 
 
 def load_groundtruth_annotations(annotations_dir: Path) -> Dict[str, Dict]:
-    """加载groundtruth标注 - 转换为绝对分数"""
+    """Load groundtruth annotations - convert to absolute scores"""
     annotations = {}
     
     for json_file in annotations_dir.glob("*.json"):
@@ -1242,8 +1242,8 @@ def load_groundtruth_annotations(annotations_dir: Path) -> Dict[str, Dict]:
             image_id = data['image_id']
             perception_scores = data['perception_scores']
             
-            # 将yes/no转换为绝对分数 (yes=1.0, no=0.0)
-            # 在实际应用中，这些分数应该基于更细粒度的标注
+            # Convert yes/no to absolute scores (yes=1.0, no=0.0)
+            # In practice, these scores should be based on more fine-grained annotations
             absolute_scores = {}
             for dim in PERCEPTION_DIMENSIONS:
                 if perception_scores[dim] == "yes":
@@ -1258,15 +1258,15 @@ def load_groundtruth_annotations(annotations_dir: Path) -> Dict[str, Dict]:
             }
             
         except Exception as e:
-            print(f"✗ 加载标注失败 {json_file}: {e}")
+            print(f"✗ Failed to load annotation {json_file}: {e}")
             continue
     
-    print(f"✓ 加载了 {len(annotations)} 个groundtruth标注")
+    print(f"✓ Loaded {len(annotations)} groundtruth annotations")
     return annotations
 
 
 def create_perception_predictor(input_dim: int = 128) -> PerceptionPredictor:
-    """创建感知预测器"""
+    """Create perception predictor"""
     model = PerceptionPredictor(
         input_dim=input_dim,
         hidden_dims=[256, 128, 64],
@@ -1274,7 +1274,7 @@ def create_perception_predictor(input_dim: int = 128) -> PerceptionPredictor:
         dropout=0.2
     )
     
-    # 初始化权重
+    # Initialize weights
     def init_weights(m):
         if isinstance(m, nn.Linear):
             nn.init.xavier_uniform_(m.weight)
@@ -1293,13 +1293,13 @@ def train_perception_predictor(
     epochs: int = 100,
     learning_rate: float = 1e-3
 ) -> PerceptionPredictor:
-    """训练感知预测器 - 回归任务"""
+    """Train perception predictor - regression task"""
     model = model.to(device)
     features = features.to(device)
     labels = labels.to(device)
     
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
-    criterion = nn.MSELoss()  # 使用MSE损失进行回归
+    criterion = nn.MSELoss()  # Use MSE loss for regression
     
     model.train()
     
@@ -1330,7 +1330,7 @@ def train_perception_predictor_with_validation(
     learning_rate: float = 1e-3,
     patience: int = 10
 ) -> PerceptionPredictor:
-    """带验证的训练感知预测器 - 回归任务"""
+    """Train perception predictor with validation - regression task"""
     model = model.to(device)
     X_train = X_train.to(device)
     y_train = y_train.to(device)
@@ -1338,14 +1338,14 @@ def train_perception_predictor_with_validation(
     y_val = y_val.to(device)
     
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
-    criterion = nn.MSELoss()  # 使用MSE损失进行回归
+    criterion = nn.MSELoss()  # Use MSE loss for regression
     
     best_val_loss = float('inf')
     patience_counter = 0
     best_model_state = None
     
     for epoch in range(epochs):
-        # 训练阶段
+        # Training phase
         model.train()
         optimizer.zero_grad()
         
@@ -1355,13 +1355,13 @@ def train_perception_predictor_with_validation(
         train_loss.backward()
         optimizer.step()
         
-        # 验证阶段
+        # Validation phase
         model.eval()
         with torch.no_grad():
             val_predictions = model(X_val)
             val_loss = criterion(val_predictions, y_val)
         
-        # 早停检查
+        # Early stopping check
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             patience_counter = 0
@@ -1376,7 +1376,7 @@ def train_perception_predictor_with_validation(
             print(f"Early stopping at epoch {epoch+1}")
             break
     
-    # 加载最佳模型
+    # Load best model
     if best_model_state is not None:
         model.load_state_dict(best_model_state)
     
@@ -1389,12 +1389,12 @@ def evaluate_predictions(
     y_pred: np.ndarray,
     dimensions: List[str]
 ) -> Dict:
-    """评估预测结果 - 回归任务"""
+    """Evaluate prediction results - regression task"""
     from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
     
     results = {}
     
-    # 整体回归指标
+    # Overall regression metrics
     results['overall'] = {
         'mse': mean_squared_error(y_true.flatten(), y_pred.flatten()),
         'rmse': np.sqrt(mean_squared_error(y_true.flatten(), y_pred.flatten())),
@@ -1402,7 +1402,7 @@ def evaluate_predictions(
         'r2': r2_score(y_true.flatten(), y_pred.flatten()),
     }
     
-    # 每个维度的指标
+    # Metrics per dimension
     results['per_dimension'] = {}
     for i, dim in enumerate(dimensions):
         results['per_dimension'][dim] = {
@@ -1417,10 +1417,10 @@ def evaluate_predictions(
 
 
 def plot_evaluation_results(results: Dict, output_dir: Path):
-    """绘制评估结果 - 回归任务"""
+    """Plot evaluation results - regression task"""
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # 整体性能图
+    # Overall performance plot
     dimensions = list(results['per_dimension'].keys())
     metrics = ['rmse', 'mae', 'r2', 'correlation']
     
@@ -1435,7 +1435,7 @@ def plot_evaluation_results(results: Dict, output_dir: Path):
         axes[i].set_ylabel(metric.upper())
         axes[i].tick_params(axis='x', rotation=45)
         
-        # 设置不同的y轴范围
+        # Set different y-axis ranges
         if metric in ['rmse', 'mae']:
             axes[i].set_ylim(0, max(values) * 1.1)
         else:  # r2, correlation
@@ -1455,7 +1455,7 @@ def save_predictions_table(
     split_lookup: Optional[Dict[int, str]] = None,
     filename_prefix: str = "all_predictions"
 ) -> Tuple[Path, Path]:
-    """����ÿ��ͼ����֪ά�������ŵ�CSV/JSON��"""
+    """Save each image's perception dimension scores to CSV/JSON files"""
     output_dir.mkdir(parents=True, exist_ok=True)
     
     csv_path = output_dir / f"{filename_prefix}.csv"
@@ -1505,26 +1505,26 @@ def generate_perception_score_grid(
     grid_size: int = 4,
     max_images_per_dim: int = 16
 ) -> None:
-    """生成类似Place Pulse风格的感知维度分数网格图"""
+    """Generate Place Pulse-style perception dimension score grid"""
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # 为每个维度创建排序的图像
+    # Create sorted images for each dimension
     for dim_idx, dimension in enumerate(dimensions):
-        # 获取该维度的分数
+        # Get scores for this dimension
         scores = predictions[:, dim_idx]
         
-        # 排序图像索引
+        # Sort image indices
         sorted_indices = np.argsort(scores)
         
-        # 选择分数最低和最高的图像
+        # Select lowest and highest score images
         low_score_indices = sorted_indices[:max_images_per_dim//2]
         high_score_indices = sorted_indices[-max_images_per_dim//2:]
         
-        # 创建网格
+        # Create grid
         fig, axes = plt.subplots(grid_size, grid_size, figsize=(12, 12))
         axes = axes.flatten()
         
-        # 填充低分数图像（左侧）
+        # Fill low score images (left side)
         for i, idx in enumerate(low_score_indices):
             if i < grid_size * grid_size // 2:
                 try:
@@ -1538,7 +1538,7 @@ def generate_perception_score_grid(
                                ha='center', va='center', transform=axes[i].transAxes)
                     axes[i].axis('off')
         
-        # 填充高分数图像（右侧）
+        # Fill high score images (right side)
         for i, idx in enumerate(high_score_indices):
             grid_pos = i + grid_size * grid_size // 2
             if grid_pos < grid_size * grid_size:
@@ -1553,18 +1553,18 @@ def generate_perception_score_grid(
                                       ha='center', va='center', transform=axes[grid_pos].transAxes)
                     axes[grid_pos].axis('off')
         
-        # 隐藏未使用的子图
+        # Hide unused subplots
         for i in range(len(image_paths), grid_size * grid_size):
             axes[i].axis('off')
         
-        # 添加标题和标签
+        # Add title and labels
         fig.suptitle(f'{dimension.capitalize()} Dimension\nLow ← → High', fontsize=16, fontweight='bold')
         
-        # 添加维度标签
+        # Add dimension label
         fig.text(0.02, 0.5, dimension.capitalize(), rotation=90, 
                 fontsize=14, fontweight='bold', va='center')
         
-        # 添加分数范围标签
+        # Add score range labels
         fig.text(0.5, 0.02, 'Low', ha='center', fontsize=12)
         fig.text(0.5, 0.98, 'High', ha='center', fontsize=12)
         
@@ -1572,7 +1572,7 @@ def generate_perception_score_grid(
         plt.savefig(output_dir / f'{dimension}_score_grid.png', dpi=300, bbox_inches='tight')
         plt.close()
         
-        print(f"✓ 生成 {dimension} 维度分数网格图")
+        print(f"✓ Generated {dimension} dimension score grid")
 
 
 def generate_all_images_score_grid(
@@ -1582,15 +1582,15 @@ def generate_all_images_score_grid(
     output_dir: Path,
     grid_size: int = 8
 ) -> None:
-    """为所有图像生成感知维度分数网格图"""
+    """Generate perception dimension score grid for all images"""
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # 为每个维度创建排序
+    # Create sorting for each dimension
     for dim_idx, dimension in enumerate(dimensions):
         scores = predictions[:, dim_idx]
         sorted_indices = np.argsort(scores)
         
-        # 计算网格大小
+        # Calculate grid size
         num_images = len(image_paths)
         rows = int(np.ceil(np.sqrt(num_images)))
         cols = int(np.ceil(num_images / rows))
@@ -1603,7 +1603,7 @@ def generate_all_images_score_grid(
         
         axes = np.array(axes).flatten()
         
-        # 填充图像
+        # Fill images
         for i, idx in enumerate(sorted_indices):
             if i < len(axes):
                 try:
@@ -1617,7 +1617,7 @@ def generate_all_images_score_grid(
                                ha='center', va='center', transform=axes[i].transAxes)
                     axes[i].axis('off')
         
-        # 隐藏未使用的子图
+        # Hide unused subplots
         for i in range(num_images, len(axes)):
             axes[i].axis('off')
         
@@ -1628,37 +1628,37 @@ def generate_all_images_score_grid(
         plt.savefig(output_dir / f'{dimension}_all_images_grid.png', dpi=300, bbox_inches='tight')
         plt.close()
         
-        print(f"✓ 生成 {dimension} 维度所有图像分数网格图")
+        print(f"✓ Generated {dimension} dimension all images score grid")
 
 
 def main():
-    """主函数"""
-    print("=== 感知推理脚本 ===")
+    """Main function"""
+    print("=== Perception Reasoning Script ===")
     
-    # 设置设备
+    # Set device
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"使用设备: {device}")
+    print(f"Using device: {device}")
     
-    # 创建输出目录
+    # Create output directories
     OUTPUT_PREDICT_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_EVALUATION_DIR.mkdir(parents=True, exist_ok=True)
     
-    # 1. 加载GraphMAE模型
-    print("\n1. 加载GraphMAE模型...")
+    # 1. Load GraphMAE model
+    print("\n1. Loading GraphMAE model...")
     graph_mae_model = load_graph_mae_model(GRAPH_MAE_MODEL_PATH, GRAPH_MAE_CONFIG, device)
     
-    # 2. 加载groundtruth标注
-    print("\n2. 加载groundtruth标注...")
+    # 2. Load groundtruth annotations
+    print("\n2. Loading groundtruth annotations...")
     groundtruth_annotations = load_groundtruth_annotations(GROUNDTRUTH_ANNOTATIONS_DIR)
     
     if not groundtruth_annotations:
-        print("✗ 未找到groundtruth标注，退出")
+        print("✗ No groundtruth annotations found, exiting")
         return
     
-    # 3. 批量检查和处理场景图
-    print("\n3. 批量检查和处理场景图...")
+    # 3. Batch check and process scene graphs
+    print("\n3. Batch checking and processing scene graphs...")
     
-    # 收集所有图像信息
+    # Collect all image information
     image_info = []
     for image_path in list(GROUNDTRUTH_IMAGES_DIR.glob("*.jpg")) + list(GROUNDTRUTH_IMAGES_DIR.glob("*.jpeg")):
         image_name = image_path.name
@@ -1676,9 +1676,9 @@ def main():
             'name': image_name
         })
     
-    print(f"找到 {len(image_info)} 张图像")
+    print(f"Found {len(image_info)} images")
     
-    # 检查哪些场景图缺失
+    # Check which scene graphs are missing
     missing_scene_graphs = []
     existing_scene_graphs = []
     
@@ -1689,28 +1689,28 @@ def main():
         else:
             missing_scene_graphs.append(info)
     
-    print(f"已存在场景图: {len(existing_scene_graphs)} 张")
-    print(f"缺失场景图: {len(missing_scene_graphs)} 张")
+    print(f"Existing scene graphs: {len(existing_scene_graphs)} images")
+    print(f"Missing scene graphs: {len(missing_scene_graphs)} images")
     
-    # 批量生成缺失的场景图（从现有场景描述）
+    # Batch generate missing scene graphs (from existing scene descriptions)
     if missing_scene_graphs:
-        print(f"\n开始批量生成 {len(missing_scene_graphs)} 个缺失的场景图...")
+        print(f"\nStarting batch generation of {len(missing_scene_graphs)} missing scene graphs...")
         batch_generate_scene_graphs_from_descriptions(missing_scene_graphs, GROUNDTRUTH_SCENE_DIR, GROUNDTRUTH_SCENE_GRAPHS_PYTORCH_DIR)
         
-        # 重新检查生成结果
+        # Recheck generation results
         newly_generated = []
         for info in missing_scene_graphs:
             scene_graph_path = find_scene_graph(info['path'], GROUNDTRUTH_SCENE_GRAPHS_PYTORCH_DIR)
             if scene_graph_path:
                 newly_generated.append((info, scene_graph_path))
             else:
-                print(f"✗ 生成失败: {info['name']}")
+                print(f"✗ Generation failed: {info['name']}")
         
         existing_scene_graphs.extend(newly_generated)
-        print(f"✓ 成功生成 {len(newly_generated)} 个场景图")
+        print(f"✓ Successfully generated {len(newly_generated)} scene graphs")
     
-    # 4. 批量提取特征
-    print(f"\n4. 批量提取特征...")
+    # 4. Batch extract features
+    print(f"\n4. Batch extracting features...")
     image_features = []
     image_labels = []
     image_ids = []
@@ -1720,14 +1720,14 @@ def main():
     processed_count = 0
     failed_count = 0
     
-    for info, scene_graph_path in tqdm(existing_scene_graphs, desc="提取特征"):
-        # 加载场景图
+    for info, scene_graph_path in tqdm(existing_scene_graphs, desc="Extracting features"):
+        # Load scene graph
         graph = load_scene_graph(scene_graph_path)
         if graph is None:
             failed_count += 1
             continue
         
-        # 提取特征
+        # Extract features
         try:
             features = extract_graph_features(graph, graph_mae_model)
             image_features.append(features.cpu())
@@ -1735,50 +1735,50 @@ def main():
             image_locations.append(info['location'])
             image_paths_all.append(info['path'])
             
-            # 获取标签
+            # Get labels
             if info['original_id'] in groundtruth_annotations:
                 labels = [groundtruth_annotations[info['original_id']]['scores'][dim] for dim in PERCEPTION_DIMENSIONS]
                 image_labels.append(labels)
             else:
-                print(f"⚠ 未找到标注: {info['original_id']}")
-                image_labels.append([0.0] * len(PERCEPTION_DIMENSIONS))  # 默认分数
+                print(f"⚠ Annotation not found: {info['original_id']}")
+                image_labels.append([0.0] * len(PERCEPTION_DIMENSIONS))  # Default scores
             
             processed_count += 1
             
         except Exception as e:
-            print(f"✗ 处理失败 {info['name']}: {e}")
+            print(f"✗ Processing failed {info['name']}: {e}")
             failed_count += 1
             continue
     
-    print(f"✓ 成功处理 {processed_count} 张图像，失败 {failed_count} 张")
+    print(f"✓ Successfully processed {processed_count} images, {failed_count} failed")
     
     if not image_features:
-        print("✗ 没有成功处理的图像，退出")
+        print("✗ No successfully processed images, exiting")
         return
     
-    # 4. 准备训练数据并划分数据集
-    print("\n4. 准备训练数据并划分数据集...")
+    # 4. Prepare training data and split dataset
+    print("\n4. Preparing training data and splitting dataset...")
     X = torch.cat(image_features, dim=0)
     y = torch.tensor(image_labels, dtype=torch.float32)
     
-    print(f"特征维度: {X.shape}")
-    print(f"标签维度: {y.shape}")
+    print(f"Feature dimensions: {X.shape}")
+    print(f"Label dimensions: {y.shape}")
     
-    # 划分数据集：训练集60%，验证集20%，测试集20%
+    # Split dataset: 60% train, 20% val, 20% test
     X_np = X.numpy()
     y_np = y.numpy()
     
-    # 首先划分训练集和临时集（80%训练+验证，20%测试）
+    # First split train+val and test (80% train+val, 20% test)
     X_train_val, X_test, y_train_val, y_test, indices_train_val, indices_test = train_test_split(
         X_np, y_np, range(len(X_np)), test_size=0.2, random_state=42, stratify=None
     )
     
-    # 再划分训练集和验证集（75%训练，25%验证）
+    # Then split train and val (75% train, 25% val)
     X_train, X_val, y_train, y_val, indices_train, indices_val = train_test_split(
         X_train_val, y_train_val, indices_train_val, test_size=0.25, random_state=42, stratify=None
     )
     
-    # 转换回PyTorch张量
+    # Convert back to PyTorch tensors
     X_train = torch.tensor(X_train, dtype=torch.float32)
     X_val = torch.tensor(X_val, dtype=torch.float32)
     X_test = torch.tensor(X_test, dtype=torch.float32)
@@ -1786,16 +1786,16 @@ def main():
     y_val = torch.tensor(y_val, dtype=torch.float32)
     y_test = torch.tensor(y_test, dtype=torch.float32)
     
-    print(f"训练集: {X_train.shape[0]} 样本")
-    print(f"验证集: {X_val.shape[0]} 样本")
-    print(f"测试集: {X_test.shape[0]} 样本")
+    print(f"Training set: {X_train.shape[0]} samples")
+    print(f"Validation set: {X_val.shape[0]} samples")
+    print(f"Test set: {X_test.shape[0]} samples")
     
-    # 统一维护index索引
+    # Maintain index mapping
     indices_train = [int(i) for i in indices_train]
     indices_val = [int(i) for i in indices_val]
     indices_test = [int(i) for i in indices_test]
     
-    # 获取对应的图像ID和位置信息
+    # Get corresponding image IDs and location information
     train_ids = [image_ids[i] for i in indices_train]
     train_locations = [image_locations[i] for i in indices_train]
     val_ids = [image_ids[i] for i in indices_val]
@@ -1803,22 +1803,22 @@ def main():
     test_ids = [image_ids[i] for i in indices_test]
     test_locations = [image_locations[i] for i in indices_test]
     
-    # 构建索引到数据集划分的映射
+    # Build index to dataset split mapping
     split_lookup = {idx: "train" for idx in indices_train}
     split_lookup.update({idx: "val" for idx in indices_val})
     split_lookup.update({idx: "test" for idx in indices_test})
     
-    # 5. 创建和训练感知预测器
-    print("\n5. 训练感知预测器...")
+    # 5. Create and train perception predictor
+    print("\n5. Training perception predictor...")
     predictor = create_perception_predictor(input_dim=X_train.shape[1])
     
-    # 使用训练集训练，验证集调参
+    # Train on training set, tune on validation set
     predictor = train_perception_predictor_with_validation(
         predictor, X_train, y_train, X_val, y_val, device=device, epochs=100, learning_rate=1e-3
     )
     
-    # 6. 对全部图像生成绝对分数并导出
-    print("\n6. 对全部图像生成绝对分数并导出...")
+    # 6. Generate absolute scores for all images and export
+    print("\n6. Generating absolute scores for all images and exporting...")
     predictor.eval()
     with torch.no_grad():
         X_all_device = X.to(device)
@@ -1832,17 +1832,17 @@ def main():
         split_lookup=split_lookup,
         filename_prefix="all_predictions"
     )
-    print(f"✓ 所有图像预测结果CSV: {all_predictions_csv}")
-    print(f"✓ 所有图像预测结果JSON: {all_predictions_json}")
+    print(f"✓ All images prediction results CSV: {all_predictions_csv}")
+    print(f"✓ All images prediction results JSON: {all_predictions_json}")
     
-    # 7. 在测试集上进行预测
-    print("\n7. 在测试集上进行预测...")
+    # 7. Make predictions on test set
+    print("\n7. Making predictions on test set...")
     with torch.no_grad():
         X_test_device = X_test.to(device)
         predictions_scores_test = predictor(X_test_device).cpu().numpy()
     
-    # 8. 保存预测结果（仅保存测试集结果）
-    print("\n8. 保存预测结果...")
+    # 8. Save prediction results (test set only)
+    print("\n8. Saving prediction results...")
     for i, (image_id, location) in enumerate(zip(test_ids, test_locations)):
         result = {
             "image_id": image_id,
@@ -1856,45 +1856,45 @@ def main():
             result["perception_scores"][dim] = float(predictions_scores_test[i, j])
             result["ground_truth"][dim] = float(y_test[i, j])
         
-        # 保存预测结果
+        # Save prediction results
         output_file = OUTPUT_PREDICT_DIR / f"{location}_{image_id}.json"
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
     
-    print(f"✓ 测试集预测结果已保存到: {OUTPUT_PREDICT_DIR}")
+    print(f"✓ Test set prediction results saved to: {OUTPUT_PREDICT_DIR}")
     
-    # 9. 评估性能（仅在测试集上）
-    print("\n9. 评估性能...")
+    # 9. Evaluate performance (test set only)
+    print("\n9. Evaluating performance...")
     y_true = y_test.numpy()
     y_pred = predictions_scores_test
     
     evaluation_results = evaluate_predictions(y_true, y_pred, PERCEPTION_DIMENSIONS)
     
-    # 保存评估结果
+    # Save evaluation results
     with open(OUTPUT_EVALUATION_DIR / 'evaluation_results.json', 'w', encoding='utf-8') as f:
         json.dump(evaluation_results, f, ensure_ascii=False, indent=2)
     
-    # 绘制评估结果
+    # Plot evaluation results
     plot_evaluation_results(evaluation_results, OUTPUT_EVALUATION_DIR)
     
-    # 打印评估结果
-    print("\n=== 测试集评估结果 ===")
-    print(f"测试集大小: {len(test_ids)} 样本")
-    print(f"整体RMSE: {evaluation_results['overall']['rmse']:.4f}")
-    print(f"整体MAE: {evaluation_results['overall']['mae']:.4f}")
-    print(f"整体R²: {evaluation_results['overall']['r2']:.4f}")
+    # Print evaluation results
+    print("\n=== Test Set Evaluation Results ===")
+    print(f"Test set size: {len(test_ids)} samples")
+    print(f"Overall RMSE: {evaluation_results['overall']['rmse']:.4f}")
+    print(f"Overall MAE: {evaluation_results['overall']['mae']:.4f}")
+    print(f"Overall R²: {evaluation_results['overall']['r2']:.4f}")
     
-    print("\n各维度性能:")
+    print("\nPerformance by dimension:")
     for dim in PERCEPTION_DIMENSIONS:
         metrics = evaluation_results['per_dimension'][dim]
         print(f"{dim:12}: RMSE={metrics['rmse']:.3f}, MAE={metrics['mae']:.3f}, R²={metrics['r2']:.3f}, Corr={metrics['correlation']:.3f}")
     
-    print(f"\n✓ 评估结果已保存到: {OUTPUT_EVALUATION_DIR}")
+    print(f"\n✓ Evaluation results saved to: {OUTPUT_EVALUATION_DIR}")
     
-    # 10. 生成感知维度分数网格图
-    print("\n10. 生成感知维度分数网格图...")
+    # 10. Generate perception dimension score grids
+    print("\n10. Generating perception dimension score grids...")
     
-    # 全量图像排序展示
+    # All images sorted display
     if image_paths_all:
         generate_perception_score_grid(
             image_paths_all,
@@ -1912,11 +1912,11 @@ def main():
             OUTPUT_EVALUATION_DIR / "all_images_grids"
         )
         
-        print(f"✓ 全量图像分数网格图已保存到: {OUTPUT_EVALUATION_DIR / 'score_grids'}")
+        print(f"✓ All images score grids saved to: {OUTPUT_EVALUATION_DIR / 'score_grids'}")
     else:
-        print("⚠ 未找到全量图像路径，跳过全量网格图生成")
+        print("⚠ All image paths not found, skipping all images grid generation")
     
-    # 测试集图像排序展示
+    # Test set images sorted display
     if indices_test:
         test_image_paths = [image_paths_all[i] for i in indices_test]
         
@@ -1936,12 +1936,12 @@ def main():
             OUTPUT_EVALUATION_DIR / "all_images_grids"
         )
         
-        print(f"✓ 测试集分数网格图已保存到: {OUTPUT_EVALUATION_DIR / 'score_grids'}")
+        print(f"✓ Test set score grids saved to: {OUTPUT_EVALUATION_DIR / 'score_grids'}")
     else:
-        print("⚠ 测试集索引为空，跳过测试集网格图生成")
+        print("⚠ Test set indices empty, skipping test set grid generation")
     
 
-# 保存数据集划分信息
+    # Save dataset split information
     dataset_split_info = {
         "train_samples": len(train_ids),
         "val_samples": len(val_ids),
@@ -1960,31 +1960,31 @@ def main():
     with open(OUTPUT_EVALUATION_DIR / 'dataset_split.json', 'w', encoding='utf-8') as f:
         json.dump(dataset_split_info, f, ensure_ascii=False, indent=2)
     
-    print(f"✓ 数据集划分信息已保存到: {OUTPUT_EVALUATION_DIR / 'dataset_split.json'}")
+    print(f"✓ Dataset split information saved to: {OUTPUT_EVALUATION_DIR / 'dataset_split.json'}")
     
-    # 11. 创建测试集文件夹并复制测试集图像
-    print("\n11. 创建测试集文件夹并复制测试集图像...")
+    # 11. Create test set folder and copy test set images
+    print("\n11. Creating test set folder and copying test set images...")
     GROUNDTRUTH_TEST_DIR.mkdir(parents=True, exist_ok=True)
     
     copied_count = 0
     for i, (image_id, location) in enumerate(zip(test_ids, test_locations)):
-        # 查找原始图像文件
+        # Find original image file
         original_image_name = f"{location}_{image_id}.jpg"
         original_image_path = GROUNDTRUTH_IMAGES_DIR / original_image_name
         
         if original_image_path.exists():
-            # 复制到测试集文件夹
+            # Copy to test set folder
             test_image_path = GROUNDTRUTH_TEST_DIR / original_image_name
             try:
                 import shutil
                 shutil.copy2(original_image_path, test_image_path)
                 copied_count += 1
             except Exception as e:
-                print(f"✗ 复制图像失败 {original_image_name}: {e}")
+                print(f"✗ Failed to copy image {original_image_name}: {e}")
         else:
-            print(f"⚠ 原始图像不存在: {original_image_name}")
+            print(f"⚠ Original image does not exist: {original_image_name}")
     
-    print(f"✓ 成功复制 {copied_count} 张测试集图像到: {GROUNDTRUTH_TEST_DIR}")
+    print(f"✓ Successfully copied {copied_count} test set images to: {GROUNDTRUTH_TEST_DIR}")
 
 
 if __name__ == "__main__":
