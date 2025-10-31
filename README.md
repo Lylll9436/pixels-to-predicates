@@ -265,6 +265,7 @@ All baseline models are trained under **identical conditions** to ensure fair co
 ## 📝 Citation
 
 If you use this code in your research, please cite:
+**⚠️ 31.10.2025-NOTICE**: This paper has NOT yet been published. The citation format will be updated upon publication.
 
 ```bibtex
 @inproceedings{pixels_to_predicates2026,
