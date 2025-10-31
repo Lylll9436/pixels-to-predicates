@@ -267,11 +267,12 @@ All baseline models are trained under **identical conditions** to ensure fair co
 If you use this code in your research, please cite:
 
 ```bibtex
-@article{pixels_to_predicates2024,
+@inproceedings{pixels_to_predicates2026,
   title={From Pixels to Predicates: Structuring urban perception with scene graphs},
   author={Liu, Yunlong and Li, Shuyang and Liu, Pengyuan and Zhang, Yu and Stouffs, Rudi},
-  journal={[Journal Name]},
-  year={2024},
+  booktitle={Proceedings of the 31st International Conference on Computer-Aided Architectural Design Research in Asia (CAADRIA 2026)},
+  year={2026},
+  note={Submitted, under review},
   url={https://github.com/Lylll9436/pixels-to-predicates}
 }
 ```
