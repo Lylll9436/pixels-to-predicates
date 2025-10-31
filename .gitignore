@@ -123,4 +123,5 @@ site/
 # Keep empty directories
 !.gitkeep
 
+# Serena
 .serena/
