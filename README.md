@@ -280,7 +280,7 @@ If you use this code in your research, please cite:
 - Yunlong Liu (School of Architecture, Southeast University, China)
 - Shuyang Li (College of Design and Engineering, National University of Singapore, Singapore / Future Cities Laboratory, Singapore-ETH Centre, Singapore)
 - Pengyuan Liu (Division of Urban Studies and Social Policy, University of Glasgow, United Kingdom)
-- Yu Zhang* (School of Architecture, Southeast University, China)
+- Yu Zhang (School of Architecture, Southeast University, China)
 - Rudi Stouffs (College of Design and Engineering, National University of Singapore, Singapore)
 
 ## 🤝 Contributing
