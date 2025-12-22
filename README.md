@@ -217,17 +217,28 @@ All baseline models are trained under **identical conditions** to ensure fair co
 
 ## 📝 Citation
 
-If you use this code in your research, please cite:
+If you use this code in your research, please cite our CAADRIA 2026 paper (To Appear). You can also refer to the project repository for now.
 
 ```bibtex
-@misc{structure_image2024,
-  title={Graph-based Urban Perception Prediction},
-  author={Liu, Yunlong},
-  year={2024},
-  publisher={GitHub},
+@inproceedings{liu2026pixels,
+  title={From Pixels to Predicates: Structuring Urban Perception with Scene Graphs},
+  author={Liu, Yunlong and Li, Shuyang and Liu, Pengyuan and Zhang, Yu and Stouffs, Rudi},
+  booktitle={Proceedings of the 31st International Conference on Computer-Aided Architectural Design Research in Asia (CAADRIA 2026)},
+  year={2026},
+  note={To appear},
   url={https://github.com/Lylll9436/structure_image}
 }
 ```
+
+> **Note:** The paper is accepted for CAADRIA 2026. The citation information will be updated once the official proceedings are published.
+
+
+**Authors:**
+- **Yunlong Liu** (Southeast University, China)
+- **Shuyang Li** (National University of Singapore / Singapore-ETH Centre)
+- **Pengyuan Liu** (University of Glasgow, United Kingdom)
+- **Yu Zhang*** (Southeast University, China) 
+- **Rudi Stouffs** (National University of Singapore)
 
 ## 🤝 Contributing
 
