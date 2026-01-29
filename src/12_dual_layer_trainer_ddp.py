@@ -55,6 +55,11 @@ from sklearn.metrics import (
 from scipy.stats import spearmanr
 from tqdm import tqdm
 
+import optuna
+from optuna.trial import Trial
+from optuna.pruners import MedianPruner
+from optuna.samplers import TPESampler
+
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -299,11 +304,10 @@ class DualLayerTrainerDDP:
         dataloader: DataLoader,
         sampler: Optional[DistributedSampler] = None,
         epoch: int = 0,
+        grad_clip: float = 1.0,
     ) -> Dict[str, float]:
-        """Train one epoch with DDP support."""
         self.model.train()
 
-        # Set epoch for shuffling
         if sampler is not None:
             sampler.set_epoch(epoch)
 
@@ -311,7 +315,6 @@ class DualLayerTrainerDDP:
         correct = 0
         total = 0
 
-        # Progress bar only on rank 0
         iterator = (
             tqdm(dataloader, desc=f"Training (Rank {self.rank})")
             if self.rank == 0
@@ -328,7 +331,7 @@ class DualLayerTrainerDDP:
             loss = self.criterion(predictions, labels)
 
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip)
             self.optimizer.step()
 
             total_loss += loss.item()
@@ -710,6 +713,184 @@ def save_metrics_json(json_path: Path, metrics: Dict, extra: Optional[Dict] = No
 
 
 # ==============================================================================
+# HPO Objective Function
+# ==============================================================================
+def create_objective(
+    args,
+    h_visual,
+    h_caption,
+    visual_dim,
+    caption_dim,
+    macro_graph,
+    image_to_street_tensor,
+    train_ds,
+    val_ds,
+    device,
+    rank,
+    world_size,
+    logger,
+):
+    def objective(trial: Trial) -> float:
+        gnn_type = trial.suggest_categorical(
+            "gnn_type", ["GAT", "GATv2", "SAGE", "GCN", "Transformer", "GIN"]
+        )
+        num_gnn_layers = trial.suggest_int("num_gnn_layers", 1, 4)
+        num_heads = trial.suggest_categorical("num_heads", [1, 2, 4, 8])
+        gnn_aggr = trial.suggest_categorical("gnn_aggr", ["mean", "max", "sum"])
+
+        hidden_dim = trial.suggest_categorical("hidden_dim", [64, 128, 256, 512])
+        micro_dim = trial.suggest_categorical("micro_dim", [64, 128, 256])
+
+        learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-3, log=True)
+        weight_decay = trial.suggest_float("weight_decay", 1e-6, 1e-3, log=True)
+        dropout = trial.suggest_float("dropout", 0.1, 0.6)
+        batch_size = trial.suggest_categorical("batch_size", [32, 64, 128, 256])
+        grad_clip = trial.suggest_float("grad_clip", 0.5, 5.0)
+
+        lr_factor = trial.suggest_float("lr_factor", 0.3, 0.7)
+        lr_patience = trial.suggest_int("lr_patience", 3, 10)
+
+        label_smoothing = trial.suggest_float("label_smoothing", 0.0, 0.15)
+
+        if rank == 0:
+            logger.info(f"\n{'=' * 60}")
+            logger.info(f"Trial {trial.number}: Testing hyperparameters")
+            logger.info(
+                f"  GNN: {gnn_type}, Layers: {num_gnn_layers}, Heads: {num_heads}"
+            )
+            logger.info(f"  Hidden: {hidden_dim}, Micro: {micro_dim}")
+            logger.info(
+                f"  LR: {learning_rate:.2e}, WD: {weight_decay:.2e}, Dropout: {dropout:.2f}"
+            )
+            logger.info(f"{'=' * 60}\n")
+
+        model = create_dual_layer_model(
+            h_visual=h_visual,
+            h_caption=h_caption,
+            visual_dim=visual_dim,
+            caption_dim=caption_dim,
+            micro_fusion_mode=args.fusion_mode,
+            micro_feature_dim=micro_dim,
+            hidden_dim=hidden_dim,
+            num_gnn_layers=num_gnn_layers,
+            num_heads=num_heads,
+            dropout=dropout,
+            gnn_type=gnn_type,
+            gnn_aggr=gnn_aggr,
+            macro_graph_data=macro_graph,
+            image_to_street_mapping=image_to_street_tensor,
+        )
+
+        model = model.to(device)
+        if world_size > 1:
+            model = DDP(model, device_ids=[rank])
+
+        if world_size > 1:
+            train_sampler = DistributedSampler(
+                train_ds, num_replicas=world_size, rank=rank, shuffle=True
+            )
+            val_sampler = DistributedSampler(
+                val_ds, num_replicas=world_size, rank=rank, shuffle=False
+            )
+        else:
+            train_sampler = None
+            val_sampler = None
+
+        train_loader = DataLoader(
+            train_ds,
+            batch_size=batch_size,
+            sampler=train_sampler,
+            shuffle=(train_sampler is None),
+            num_workers=0,
+        )
+        val_loader = DataLoader(
+            val_ds,
+            batch_size=batch_size,
+            sampler=val_sampler,
+            shuffle=False,
+            num_workers=0,
+        )
+
+        effective_lr = learning_rate * world_size
+        optimizer = torch.optim.AdamW(
+            model.parameters(), lr=effective_lr, weight_decay=weight_decay
+        )
+        criterion = nn.BCELoss()
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode="max", factor=lr_factor, patience=lr_patience, min_lr=1e-6
+        )
+
+        best_auc = 0.0
+
+        for epoch in range(1, args.hpo_epochs + 1):
+            if train_sampler is not None:
+                train_sampler.set_epoch(epoch)
+
+            model.train()
+            for batch in train_loader:
+                left_idx = batch["left_idx"].to(device)
+                right_idx = batch["right_idx"].to(device)
+                labels = batch["label"].float().to(device)
+
+                optimizer.zero_grad()
+                predictions = model(left_idx, right_idx)
+                loss = criterion(predictions, labels)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                optimizer.step()
+
+            model.eval()
+            all_preds = []
+            all_labels = []
+            with torch.no_grad():
+                for batch in val_loader:
+                    left_idx = batch["left_idx"].to(device)
+                    right_idx = batch["right_idx"].to(device)
+                    labels = batch["label"].float().to(device)
+                    predictions = model(left_idx, right_idx)
+                    all_preds.extend(predictions.cpu().tolist())
+                    all_labels.extend(labels.cpu().tolist())
+
+            y_prob = np.array(all_preds)
+            y_true = np.array(all_labels)
+            binary_mask = (y_true == 0.0) | (y_true == 1.0)
+            if binary_mask.sum() > 0:
+                y_true_bin = y_true[binary_mask]
+                y_prob_bin = y_prob[binary_mask]
+                try:
+                    val_auc = (
+                        roc_auc_score(y_true_bin, y_prob_bin)
+                        if len(np.unique(y_true_bin)) > 1
+                        else 0.5
+                    )
+                except:
+                    val_auc = 0.5
+            else:
+                val_auc = 0.5
+
+            scheduler.step(val_auc)
+
+            if rank == 0:
+                logger.info(
+                    f"Trial {trial.number} Epoch {epoch}/{args.hpo_epochs}: Val AUC {val_auc:.4f}"
+                )
+
+            if val_auc > best_auc:
+                best_auc = val_auc
+
+            trial.report(val_auc, epoch)
+
+            if trial.should_prune():
+                if rank == 0:
+                    logger.info(f"Trial {trial.number} pruned at epoch {epoch}")
+                raise optuna.TrialPruned()
+
+        return best_auc
+
+    return objective
+
+
+# ==============================================================================
 # Main Training Flow (DDP Version)
 # ==============================================================================
 def run_training(args) -> None:
@@ -950,6 +1131,8 @@ def run_training(args) -> None:
         num_gnn_layers=args.num_gnn_layers,
         num_heads=args.num_heads,
         dropout=args.dropout,
+        gnn_type=args.gnn_type,
+        gnn_aggr=args.gnn_aggr,
     )
 
     total_params = sum(p.numel() for p in model.parameters())
@@ -975,6 +1158,14 @@ def run_training(args) -> None:
         is_distributed=is_distributed,
     )
 
+    trainer.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        trainer.optimizer,
+        mode="max",
+        factor=args.lr_factor,
+        patience=args.lr_patience,
+        min_lr=1e-6,
+    )
+
     best_auc = 0.0
     best_state = None
     patience_counter = 0
@@ -986,7 +1177,7 @@ def run_training(args) -> None:
             dist.barrier()
 
         train_res = trainer.train_epoch(
-            train_loader, sampler=train_sampler, epoch=epoch
+            train_loader, sampler=train_sampler, epoch=epoch, grad_clip=args.grad_clip
         )
         val_res = trainer.validate(val_loader, sampler=val_sampler)
 
@@ -1111,6 +1302,162 @@ def run_training(args) -> None:
     logger.info(f"Best validation AUC: {best_auc:.4f}")
     logger.info(f"Test set AUC: {test_metrics['auc']:.4f}")
     logger.info("=" * 60)
+
+
+# ==============================================================================
+# HPO Mode
+# ==============================================================================
+def run_hpo(args):
+    rank, world_size, local_rank, is_distributed = setup_distributed()
+
+    if is_distributed:
+        device = f"cuda:{local_rank}"
+    else:
+        device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
+
+    result_dir = Path(args.result_dir)
+    if rank == 0:
+        result_dir.mkdir(parents=True, exist_ok=True)
+
+    log_dir = Path(args.log_dir) / "hpo"
+    logger = create_logger(log_dir, f"hpo_rank{rank}", rank=rank)
+
+    if rank == 0:
+        logger.info("=" * 60)
+        logger.info("Bayesian Hyperparameter Optimization")
+        logger.info("=" * 60)
+        logger.info(f"Study: {args.study_name}")
+        logger.info(f"Trials: {args.n_trials}")
+        logger.info(f"Epochs per trial: {args.hpo_epochs}")
+
+    repr_file = Path(args.repr_file)
+    ids_file = Path(args.ids_file)
+    graphs_dir = Path(args.graphs_dir)
+
+    if not repr_file.exists() or not ids_file.exists():
+        logger.error(f"Micro feature files not found: {repr_file} or {ids_file}")
+        cleanup_distributed()
+        return
+
+    h_visual = torch.load(repr_file, map_location="cpu", weights_only=False)
+    with open(ids_file, "r", encoding="utf-8") as f:
+        graph_ids = json.load(f)
+
+    visual_dim = h_visual.shape[1]
+    h_caption = load_caption_features(str(graphs_dir), graph_ids)
+    caption_dim = h_caption.shape[1]
+    id_to_index = {fid: i for i, fid in enumerate(graph_ids)}
+
+    macro_graph_path = Path(args.macro_graph)
+    macro_map_path = Path(args.macro_mapping)
+
+    if not macro_graph_path.exists() or not macro_map_path.exists():
+        logger.error(
+            f"Macro graph files not found: {macro_graph_path} or {macro_map_path}"
+        )
+        cleanup_distributed()
+        return
+
+    macro_graph = torch.load(macro_graph_path, map_location="cpu", weights_only=False)
+    with open(macro_map_path, "rb") as f:
+        img_to_street_dict = pickle.load(f)
+
+    if args.no_func_edges and hasattr(macro_graph, "edge_index_func"):
+        macro_graph.edge_index_func = None
+
+    num_images = len(graph_ids)
+    image_to_street_tensor = torch.zeros(num_images, dtype=torch.long)
+    for i, fid in enumerate(graph_ids):
+        if fid in img_to_street_dict:
+            image_to_street_tensor[i] = img_to_street_dict[fid]
+
+    if not args.comparisons_file:
+        logger.error("--comparisons-file is required for HPO")
+        cleanup_distributed()
+        return
+
+    comparisons = load_comparisons_from_file(
+        args.comparisons_file, max_samples=args.max_samples, rank=rank
+    )
+
+    if args.category:
+        allowed = {c.strip() for c in args.category.split(",") if c.strip()}
+        comparisons = [c for c in comparisons if c.get("category") in allowed]
+
+    if not comparisons:
+        logger.error("No comparison data found")
+        cleanup_distributed()
+        return
+
+    flip_negative = not getattr(args, "no_flip_negative", False)
+    dataset = DualLayerComparisonDataset(
+        comparisons, id_to_index, flip_negative=flip_negative
+    )
+
+    if len(dataset) < 10:
+        logger.error(f"Too few valid samples: {len(dataset)}")
+        cleanup_distributed()
+        return
+
+    train_ratio = args.train_ratio
+    val_ratio = args.val_ratio
+    train_size = int(train_ratio * len(dataset))
+    val_size = int(val_ratio * len(dataset))
+    test_size = len(dataset) - train_size - val_size
+
+    generator = torch.Generator().manual_seed(args.seed)
+    train_ds, val_ds, _ = random_split(
+        dataset, [train_size, val_size, test_size], generator=generator
+    )
+
+    if rank == 0:
+        logger.info(f"Dataset split: Train {len(train_ds)}, Val {len(val_ds)}")
+
+    objective = create_objective(
+        args,
+        h_visual,
+        h_caption,
+        visual_dim,
+        caption_dim,
+        macro_graph,
+        image_to_street_tensor,
+        train_ds,
+        val_ds,
+        device,
+        rank,
+        world_size,
+        logger,
+    )
+
+    if rank == 0:
+        storage = args.storage or f"sqlite:///{result_dir}/optuna_{args.study_name}.db"
+
+        study = optuna.create_study(
+            study_name=args.study_name,
+            storage=storage,
+            load_if_exists=True,
+            direction="maximize",
+            sampler=TPESampler(seed=args.seed),
+            pruner=MedianPruner(n_startup_trials=10, n_warmup_steps=5),
+        )
+
+        study.optimize(objective, n_trials=args.n_trials, show_progress_bar=True)
+
+        logger.info("\n" + "=" * 60)
+        logger.info("Optimization Complete!")
+        logger.info(f"Best trial: {study.best_trial.number}")
+        logger.info(f"Best AUC: {study.best_trial.value:.4f}")
+        logger.info("Best hyperparameters:")
+        for key, value in study.best_trial.params.items():
+            logger.info(f"  {key}: {value}")
+        logger.info("=" * 60)
+
+        best_params_path = result_dir / f"best_params_{args.study_name}.json"
+        with open(best_params_path, "w") as f:
+            json.dump(study.best_trial.params, f, indent=2)
+        logger.info(f"Best params saved to: {best_params_path}")
+
+    cleanup_distributed()
 
 
 # ==============================================================================
@@ -1247,9 +1594,49 @@ def main():
         help="Do not flip negative category labels (boring, depressing)",
     )
 
+    # HPO 参数
+    parser.add_argument("--hpo", action="store_true", help="启用 Optuna 超参数搜索")
+    parser.add_argument("--n-trials", type=int, default=100, help="HPO trials 数量")
+    parser.add_argument(
+        "--study-name", type=str, default="dual_layer_hpo", help="Optuna study 名称"
+    )
+    parser.add_argument(
+        "--storage", type=str, default=None, help="Optuna 存储路径 (SQLite)"
+    )
+    parser.add_argument(
+        "--hpo-epochs", type=int, default=20, help="每个 trial 的训练轮数"
+    )
+
+    # GNN 架构参数
+    parser.add_argument(
+        "--gnn-type",
+        type=str,
+        default="GAT",
+        choices=["GAT", "GATv2", "SAGE", "GCN", "Transformer", "GIN"],
+        help="GNN 架构类型",
+    )
+    parser.add_argument(
+        "--gnn-aggr",
+        type=str,
+        default="mean",
+        choices=["mean", "max", "sum"],
+        help="SAGE 聚合方式",
+    )
+
+    # 额外训练参数
+    parser.add_argument("--grad-clip", type=float, default=1.0, help="梯度裁剪值")
+    parser.add_argument("--label-smoothing", type=float, default=0.0, help="标签平滑")
+    parser.add_argument(
+        "--lr-factor", type=float, default=0.5, help="LR 调度器衰减因子"
+    )
+    parser.add_argument("--lr-patience", type=int, default=5, help="LR 调度器耐心值")
+
     args = parser.parse_args()
 
-    run_training(args)
+    if args.hpo:
+        run_hpo(args)
+    else:
+        run_training(args)
 
 
 if __name__ == "__main__":
